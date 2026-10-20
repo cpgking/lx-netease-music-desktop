@@ -47,8 +47,8 @@ const options = {
   publish: [
     {
       provider: 'github',
-      owner: 'souvenp',
-      repo: 'lx-netease-music-desktop',
+      owner: process.env.UPDATE_OWNER || 'cpgking',
+      repo: process.env.UPDATE_REPO || 'lx-netease-music-desktop',
       releaseType: 'release',
     },
   ],
