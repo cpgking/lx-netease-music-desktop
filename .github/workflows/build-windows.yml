@@ -1,0 +1,92 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_release:
+        description: '构建后创建/更新 Release 并上传安装包'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Release 标签（留空则使用 v{package.json version}）'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  IS_CI: 'true'
+
+jobs:
+  Windows_x64:
+    name: Windows x64 setup
+    runs-on: windows-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build source code
+        run: npm run build
+
+      - name: Package NSIS installer (x64)
+        run: node build-config/build-pack.js target=win arch=x64 type=setup
+
+      - name: Show artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem build -Filter *.exe | Format-Table Name, Length
+          Get-FileHash build/*.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lx-netease-desktop-windows-x64
+          path: build/*.exe
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        if: github.event_name == 'push' || inputs.upload_release
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $version = (Get-Content package.json | ConvertFrom-Json).version
+            $tag = "v$version"
+          }
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Create or update release
+        if: github.event_name == 'push' || inputs.upload_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $notes = @"
+          Windows x64 安装包，由 GitHub Actions 自动构建。
+
+          - 源码基线：souvenp/lx-netease-music-desktop
+          - 提交：${{ github.sha }}
+          "@
+          $notes | Out-File -FilePath release-notes.md -Encoding utf8
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG build/*.exe --clobber
+          } else {
+            gh release create $env:TAG build/*.exe --title $env:TAG --notes-file release-notes.md --target ${{ github.sha }}
+          }
